@@ -84,7 +84,7 @@ Password Manager frontend-only, responsive và production-ready với React + Ty
 
 - [x] `npm run lint` pass.
 - [x] `npm run typecheck` pass.
-- [x] `npm run test` pass: 4 files, 11 tests.
+- [x] `npm run test` pass: 5 files, 14 tests.
 - [x] `npm run build` pass.
 - [x] `.github/workflows/ci.yml` chạy lint, typecheck, test và build.
 - [x] `.github/workflows/deploy-pages.yml` deploy sau CI thành công trên `main`.
