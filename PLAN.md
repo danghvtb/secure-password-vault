@@ -144,6 +144,8 @@ Không yêu cầu user gửi password, PAT, access token, refresh token hoặc s
 
 ## Known environment constraints
 
+- Git 2.55.0 and GitHub CLI 2.97.0 are now installed locally; GitHub authentication is still pending.
+
 - Node và npm đã có sẵn.
 - PowerShell chặn `npm.ps1`, dùng `npm.cmd` khi chạy command.
 - Git và GitHub CLI chưa có trong PATH.
