@@ -91,7 +91,8 @@ Password Manager frontend-only, responsive và production-ready với React + Ty
 - [x] Vite relative base và app-shell navigation phù hợp GitHub Pages.
 - [x] README tiếng Việt, security model, threat model, setup, testing và limitations.
 - [x] Local production-like smoke test bằng Playwright pass.
-- [ ] GitHub repository creation, push và Pages URL — cần Git/GitHub CLI + authentication.
+- [x] GitHub repository creation và push — repository `danghvtb/secure-password-vault` đã tạo private và push lên `main`.
+- [ ] GitHub Pages URL — cần bật Pages và chờ workflow deploy trên GitHub.
 - [ ] Google Cloud OAuth client, OAuth consent và production Drive smoke test — cần user account interaction.
 
 ## Public interfaces chính
@@ -144,7 +145,7 @@ Không yêu cầu user gửi password, PAT, access token, refresh token hoặc s
 
 ## Known environment constraints
 
-- Git 2.55.0 and GitHub CLI 2.97.0 are now installed locally; GitHub authentication is still pending.
+- Git 2.55.0 và GitHub CLI 2.97.0 đã cài; GitHub API xác thực được trong CMD người dùng, nhưng tiến trình Codex không đọc được keyring đó.
 
 - Node và npm đã có sẵn.
 - PowerShell chặn `npm.ps1`, dùng `npm.cmd` khi chạy command.
