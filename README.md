@@ -51,6 +51,8 @@ App dùng scope `https://www.googleapis.com/auth/drive.file`. Không đưa clien
 
 Để đổi Gmail đang dùng, mở `Settings → Google Drive → Change Google account`. SecureVault mở account chooser của Google rồi kiểm tra tài khoản mới còn truy cập được vault hiện tại. Nếu không có quyền, hãy share file vault cho tài khoản mới hoặc giữ tài khoản cũ.
 
+Trên thiết bị mới, Setup Wizard cũng có mục `Already have a vault?` để nhập Google Drive file URL hoặc file ID và liên kết vault hiện có, tránh tạo thêm `PasswordVault.vault` trùng.
+
 ## Google Drive vault
 
 Khi kết nối lần đầu app tạo `PasswordVault.vault` với MIME type `application/octet-stream`. File chỉ chứa encrypted envelope. Google Drive permission là source of truth cho Owner, Editor và Viewer.

@@ -143,12 +143,17 @@ function App() {
   const connectExisting = async (fileIdOrUrl: string) => {
     const fileId = parseDriveFileId(fileIdOrUrl)
     if (!fileId) throw new Error('Enter a valid Google Drive file URL or file ID.')
-    if (provider.mode !== 'google') throw new Error('Configure Google Drive before connecting a shared vault.')
-    await provider.connect({ prompt: 'select_account' })
-    const metadata = await provider.getMetadata({ fileId, fileName: 'PasswordVault.vault', permission: 'reader', mode: 'google', linkedAt: new Date().toISOString(), lastSyncAt: null })
+    const googleProvider = provider.mode === 'google' ? provider : new GoogleDriveProvider()
+    await googleProvider.connect({ prompt: 'select_account' })
+    const metadata = await googleProvider.getMetadata({ fileId, fileName: 'PasswordVault.vault', permission: 'writer', mode: 'google', linkedAt: new Date().toISOString(), lastSyncAt: null })
     const nextPreferences = { ...preferences, setupComplete: true, storageMode: 'google' as const, driveMetadata: metadata }
+    setProvider(googleProvider)
+    keyRef.current = null
+    saltRef.current = null
+    setVault(null)
     savePreferences(nextPreferences)
     setPreferences(nextPreferences)
+    setLocked(true)
     showNotice({ type: 'success', message: `Connected to ${metadata.fileName}. Unlock with the vault Master Password.` })
   }
 
@@ -182,7 +187,7 @@ function App() {
   const selectedEntry = vault?.entries.find((entry) => entry.id === selectedId) ?? entries[0] ?? null
 
   if (!preferences.setupComplete) {
-    return <SetupWizard onSetup={setup} configuredGoogle={Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID)} />
+    return <SetupWizard onSetup={setup} onConnectExisting={connectExisting} configuredGoogle={Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID)} />
   }
   if (locked || !vault) {
     return <UnlockScreen username={preferences.username} onUnlock={unlock} notice={notice} />
@@ -239,13 +244,14 @@ function createProvider(preferences: DevicePreferences): VaultStorageProvider {
   return preferences.storageMode === 'google' ? new GoogleDriveProvider() : new MockDriveProvider()
 }
 
-function SetupWizard({ onSetup, configuredGoogle }: { onSetup: (password: string, mode: 'mock' | 'google') => Promise<void>; configuredGoogle: boolean }) {
+function SetupWizard({ onSetup, onConnectExisting, configuredGoogle }: { onSetup: (password: string, mode: 'mock' | 'google') => Promise<void>; onConnectExisting: (fileIdOrUrl: string) => Promise<void>; configuredGoogle: boolean }) {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [mode, setMode] = useState<'mock' | 'google'>('mock')
   const [show, setShow] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [existingVault, setExistingVault] = useState('')
   const strength = scorePassword(password)
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -253,6 +259,11 @@ function SetupWizard({ onSetup, configuredGoogle }: { onSetup: (password: string
     if (password !== confirm) return setError('Passwords do not match.')
     setBusy(true); setError('')
     try { await onSetup(password, mode) } catch (setupError) { setError(setupError instanceof Error ? setupError.message : 'Setup failed.') } finally { setBusy(false) }
+  }
+  const connect = async () => {
+    if (!existingVault.trim()) return setError('Enter the Google Drive file URL or file ID.')
+    setBusy(true); setError('')
+    try { await onConnectExisting(existingVault.trim()) } catch (connectError) { setError(connectError instanceof Error ? connectError.message : 'Could not connect vault.') } finally { setBusy(false) }
   }
   return <div className="auth-screen"><div className="auth-brand"><div className="brand-mark"><Shield size={28} /></div><span>Secure<span>Vault</span></span></div><div className="setup-card">
     <div className="step-label"><span className="step-active">01</span><span>02</span><span>03</span></div>
@@ -264,10 +275,11 @@ function SetupWizard({ onSetup, configuredGoogle }: { onSetup: (password: string
       <div className="warning-box"><AlertTriangle size={18} /><span>If you lose this password, your encrypted vault cannot be recovered. SecureVault does not have a reset mechanism.</span></div>
       <div className="storage-choice"><div className="field-label">Vault storage</div><div className="choice-grid"><button type="button" className={mode === 'mock' ? 'choice selected' : 'choice'} onClick={() => setMode('mock')}><Database size={18} /><span><strong>Local demo</strong><small>Encrypted browser storage</small></span><Check size={16} /></button><button type="button" className={mode === 'google' ? 'choice selected' : 'choice'} disabled={!configuredGoogle} onClick={() => setMode('google')}><Globe2 size={18} /><span><strong>Google Drive</strong><small>{configuredGoogle ? 'Connect your own Drive' : 'Add OAuth client ID first'}</small></span><Check size={16} /></button></div></div>
       {error && <div className="form-error"><AlertTriangle size={16} />{error}</div>}<button className="primary-button full" disabled={busy} type="submit">{busy ? <><RefreshCw className="spin" size={17} /> Creating encrypted vault…</> : <>Create my vault <ArrowDownToLine size={17} /></>}</button>
-    </form><div className="auth-footer"><Lock size={14} /> AES-256-GCM encryption · PBKDF2-SHA256</div>
+    </form>
+    {configuredGoogle && <div className="connect-existing"><div className="field-label">Already have a vault?</div><p className="muted">Connect an existing Google Drive vault on this device instead of creating a duplicate.</p><div className="share-form"><input placeholder="Drive file URL or file ID" value={existingVault} onChange={(event) => setExistingVault(event.target.value)} /><button className="outline-button" type="button" disabled={!existingVault.trim() || busy} onClick={() => void connect()}>{busy ? 'Connecting…' : 'Connect existing vault'}</button></div></div>}
+    <div className="auth-footer"><Lock size={14} /> AES-256-GCM encryption · PBKDF2-SHA256</div>
   </div></div>
 }
-
 function UnlockScreen({ username, onUnlock, notice }: { username: string; onUnlock: (password: string) => Promise<void>; notice: Notice | null }) {
   const [password, setPassword] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState('')
   const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(''); try { await onUnlock(password) } catch (unlockError) { setError(unlockError instanceof Error ? unlockError.message : 'Unable to unlock vault.') } finally { setBusy(false) } }
