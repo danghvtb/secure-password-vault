@@ -92,7 +92,7 @@ Password Manager frontend-only, responsive và production-ready với React + Ty
 - [x] README tiếng Việt, security model, threat model, setup, testing và limitations.
 - [x] Local production-like smoke test bằng Playwright pass.
 - [x] GitHub repository creation và push — repository `danghvtb/secure-password-vault` đã tạo private và push lên `main`.
-- [ ] GitHub Pages URL — cần bật Pages và chờ workflow deploy trên GitHub.
+- [x] GitHub Pages URL — đã bật workflow deployment: https://danghvtb.github.io/secure-password-vault/
 - [ ] Google Cloud OAuth client, OAuth consent và production Drive smoke test — cần user account interaction.
 
 ## Public interfaces chính
