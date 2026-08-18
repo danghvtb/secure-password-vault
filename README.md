@@ -88,7 +88,7 @@ npm audit
 
 ## GitHub Pages
 
-CI chạy lint, typecheck, test và build. Workflow Pages chỉ deploy sau khi CI trên `main` thành công. GitHub/GitHub CLI cần được cài và user cần hoàn tất `gh auth login` bằng flow chính thức.
+CI chạy lint, typecheck, test và build. Workflow Pages chỉ deploy sau khi CI trên `main` thành công. Sau khi tạo repository, đặt `VITE_GOOGLE_CLIENT_ID` (và tùy chọn `VITE_GOOGLE_API_KEY`) trong **Settings → Secrets and variables → Actions → Variables** để production build có Google configuration. GitHub/GitHub CLI cần được cài và user cần hoàn tất `gh auth login` bằng flow chính thức.
 
 GitHub không được chứa:
 
