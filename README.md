@@ -49,6 +49,8 @@ Không cần credential để chạy local demo. Chọn **Local demo** trong Set
 
 App dùng scope `https://www.googleapis.com/auth/drive.file`. Không đưa client secret vào frontend và không gửi token/password qua chat.
 
+Để đổi Gmail đang dùng, mở `Settings → Google Drive → Change Google account`. SecureVault mở account chooser của Google rồi kiểm tra tài khoản mới còn truy cập được vault hiện tại. Nếu không có quyền, hãy share file vault cho tài khoản mới hoặc giữ tài khoản cũ.
+
 ## Google Drive vault
 
 Khi kết nối lần đầu app tạo `PasswordVault.vault` với MIME type `application/octet-stream`. File chỉ chứa encrypted envelope. Google Drive permission là source of truth cho Owner, Editor và Viewer.

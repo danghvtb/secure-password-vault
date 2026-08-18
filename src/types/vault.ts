@@ -60,6 +60,10 @@ export interface EncryptedVaultEnvelope {
 export type VaultPermission = 'owner' | 'writer' | 'reader'
 export type StorageMode = 'mock' | 'google'
 
+export type GoogleConnectOptions = {
+  prompt?: '' | 'none' | 'consent' | 'select_account'
+}
+
 export interface DriveMetadata {
   fileId: string
   fileName: string
@@ -78,7 +82,7 @@ export interface DrivePermission {
 
 export interface VaultStorageProvider {
   readonly mode: StorageMode
-  connect(): Promise<void>
+  connect(options?: GoogleConnectOptions): Promise<void>
   create(envelope: EncryptedVaultEnvelope): Promise<DriveMetadata>
   download(metadata: DriveMetadata): Promise<EncryptedVaultEnvelope>
   update(metadata: DriveMetadata, envelope: EncryptedVaultEnvelope): Promise<DriveMetadata>
@@ -86,6 +90,7 @@ export interface VaultStorageProvider {
   listPermissions?(metadata: DriveMetadata): Promise<DrivePermission[]>
   share?(metadata: DriveMetadata, email: string, role: 'reader' | 'writer'): Promise<void>
   removePermission?(metadata: DriveMetadata, permissionId: string): Promise<void>
+  switchAccount?(metadata?: DriveMetadata): Promise<DriveMetadata | undefined>
 }
 
 export interface VaultHealth {

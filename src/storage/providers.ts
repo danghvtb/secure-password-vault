@@ -1,5 +1,5 @@
 import { deserializeEnvelope, serializeEnvelope } from '../crypto/vaultCrypto'
-import type { DriveMetadata, DrivePermission, EncryptedVaultEnvelope, VaultStorageProvider } from '../types/vault'
+import type { DriveMetadata, DrivePermission, EncryptedVaultEnvelope, GoogleConnectOptions, VaultStorageProvider } from '../types/vault'
 
 const MOCK_KEY = 'securevault.mock-drive.envelope.v1'
 const MOCK_META_KEY = 'securevault.mock-drive.metadata.v1'
@@ -68,7 +68,7 @@ export class GoogleDriveProvider implements VaultStorageProvider {
     this.clientId = clientId
   }
 
-  async connect(): Promise<void> {
+  async connect(options: GoogleConnectOptions = {}): Promise<void> {
     if (!this.clientId) throw new Error('Google OAuth client ID is not configured.')
     await loadGoogleIdentityScript()
     if (!window.google) throw new Error('Google Identity Services could not load.')
@@ -81,8 +81,20 @@ export class GoogleDriveProvider implements VaultStorageProvider {
           else { this.accessToken = response.access_token; resolve() }
         },
       }) ?? null
-      this.tokenClient?.requestAccessToken({ prompt: '' })
+      this.tokenClient?.requestAccessToken({ prompt: options.prompt ?? '' })
     })
+  }
+
+  async switchAccount(metadata?: DriveMetadata): Promise<DriveMetadata | undefined> {
+    const previousToken = this.accessToken
+    await this.connect({ prompt: 'select_account' })
+    if (!metadata) return undefined
+    try {
+      return await this.getMetadata(metadata)
+    } catch {
+      this.accessToken = previousToken
+      throw new Error('The selected Google account cannot access the current vault. Share the vault with that account or keep the current account.')
+    }
   }
 
   async create(envelope: EncryptedVaultEnvelope): Promise<DriveMetadata> {
