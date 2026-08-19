@@ -70,24 +70,49 @@ export class GoogleDriveProvider implements VaultStorageProvider {
     this.clientId = clientId
   }
 
+  isConnected(): boolean {
+    return Boolean(this.accessToken && this.account)
+  }
+
   async connect(options: GoogleConnectOptions = {}): Promise<void> {
     if (!this.clientId) throw new Error('Google OAuth client ID is not configured.')
     if (this.accessToken && this.account && (options.prompt === undefined || options.prompt === '' || options.prompt === 'none')) return
     await loadGoogleIdentityScript()
     if (!window.google) throw new Error('Google Identity Services could not load.')
     await new Promise<void>((resolve, reject) => {
-      this.tokenClient = window.google?.accounts.oauth2.initTokenClient({
-        client_id: this.clientId,
-        scope: 'https://www.googleapis.com/auth/drive.file',
-        callback: (response) => {
-          if (response.error || !response.access_token) {
-            const canRetryInteractively = response.error === 'interaction_required' || response.error === 'login_required' || response.error === 'consent_required'
-            reject(new Error(canRetryInteractively ? 'Google session expired. Use "Sign in with another Google account" to reconnect.' : 'Google authorization failed.'))
-          }
-          else { this.accessToken = response.access_token; resolve() }
-        },
-      }) ?? null
-      this.tokenClient?.requestAccessToken({ prompt: options.prompt ?? '' })
+      let settled = false
+      const timeout = window.setTimeout(() => finishReject(new Error('Google authorization timed out. Please try again.')), 15000)
+      const finishResolve = () => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timeout)
+        resolve()
+      }
+      const finishReject = (error: Error) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timeout)
+        reject(error)
+      }
+      try {
+        this.tokenClient = window.google?.accounts.oauth2.initTokenClient({
+          client_id: this.clientId,
+          scope: 'https://www.googleapis.com/auth/drive.file',
+          callback: (response) => {
+            if (response.error || !response.access_token) {
+              const canRetryInteractively = response.error === 'interaction_required' || response.error === 'login_required' || response.error === 'consent_required'
+              finishReject(new Error(canRetryInteractively ? 'Google session expired. Use "Sign in with another Google account" to reconnect.' : 'Google authorization failed.'))
+            } else {
+              this.accessToken = response.access_token
+              finishResolve()
+            }
+          },
+        }) ?? null
+        if (!this.tokenClient) finishReject(new Error('Google OAuth client could not be initialized.'))
+        else this.tokenClient.requestAccessToken({ prompt: options.prompt ?? '' })
+      } catch (error) {
+        finishReject(error instanceof Error ? error : new Error('Google authorization failed.'))
+      }
     })
     const response = await this.request('https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName,permissionId)')
     const body = await response.json() as { user?: { emailAddress?: string; displayName?: string; permissionId?: string } }
