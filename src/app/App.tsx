@@ -241,6 +241,14 @@ function App() {
     }
   }
 
+  const logout = () => {
+    const nextPreferences = clearDeviceLinkage()
+    setGoogleSetup(null)
+    setProvider(createProvider(nextPreferences))
+    setPreferences(nextPreferences)
+    lock()
+  }
+
   const entries = useMemo(() => {
     if (!vault) return []
     let result = searchEntries(vault.entries, query, categoryFilter)
@@ -265,7 +273,7 @@ function App() {
   return (
     <div className="app-shell">
       {warning && <div className="lock-warning"><AlertTriangle size={16} /> Vault will lock soon due to inactivity. <button onClick={() => window.dispatchEvent(new Event('pointerdown'))}>Stay unlocked</button></div>}
-      <Sidebar view={view} setView={(next) => { setView(next); setMobileMenu(false) }} open={mobileMenu} onClose={() => setMobileMenu(false)} vault={vault} />
+      <Sidebar view={view} setView={(next) => { setView(next); setMobileMenu(false) }} open={mobileMenu} onClose={() => setMobileMenu(false)} vault={vault} onLogout={logout} />
       <main className="main-content">
         <header className="topbar">
           <button className="icon-button menu-button" onClick={() => setMobileMenu(true)} aria-label="Open navigation"><Menu size={20} /></button>
@@ -279,7 +287,7 @@ function App() {
         <div className="page-content">
           {view === 'overview' && <Overview vault={vault} onNavigate={setView} onSelect={(id) => { setSelectedId(id); setView('all') }} onNew={() => { setEditingEntry(null); setModal('entry') }} />}
           {view === 'generator' && <GeneratorView />}
-          {view === 'settings' && <SettingsView preferences={preferences} setPreferences={(next) => { setPreferences(next); savePreferences(next) }} provider={provider} onNotice={showNotice} onDisconnect={() => { const next = clearDeviceLinkage(); setGoogleSetup(null); setPreferences(next); lock() }} onSwitchGoogleAccount={switchGoogleAccount} onExport={exportBackup} onImport={importBackup} onConnectExisting={connectExisting} />}
+          {view === 'settings' && <SettingsView preferences={preferences} setPreferences={(next) => { setPreferences(next); savePreferences(next) }} provider={provider} onNotice={showNotice} onDisconnect={logout} onSwitchGoogleAccount={switchGoogleAccount} onExport={exportBackup} onImport={importBackup} onConnectExisting={connectExisting} />}
           {view !== 'overview' && view !== 'generator' && view !== 'settings' && (
             <EntriesView
               title={view === 'all' ? 'All passwords' : view === 'favorites' ? 'Favorites' : 'Password health'}
@@ -360,10 +368,10 @@ function UnlockScreen({ username, accountEmail, onUnlock, onSwitchGoogleAccount,
   return <div className="auth-screen"><div className="auth-brand"><div className="brand-mark"><Shield size={28} /></div><span>Secure<span>Vault</span></span></div><div className="unlock-card"><div className="unlock-icon"><Lock size={30} /></div><div className="eyebrow">Welcome back, {username}</div><h1>Unlock your vault</h1><p className="auth-copy">{accountEmail ? <>Signed in as <strong>{accountEmail}</strong>.</> : 'Your passwords are encrypted and ready when you are.'}</p><form onSubmit={submit}><label>Master Password<div className="password-field"><input autoFocus type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your Master Password" /><button type="button" aria-label="Show password" onClick={(event) => { const input = event.currentTarget.previousElementSibling as HTMLInputElement | null; if (input) input.type = input.type === 'password' ? 'text' : 'password' }}><Eye size={18} /></button></div></label>{error && <div className="form-error"><AlertTriangle size={16} />{error}</div>}<button className="primary-button full" disabled={busy || switching} type="submit">{busy ? <><RefreshCw className="spin" size={17} /> Unlocking…</> : <><KeyRound size={17} /> Unlock vault</>}</button></form>{onSwitchGoogleAccount && <button className="outline-button full" disabled={busy || switching} type="button" onClick={() => void switchAccount()}>{switching ? <><RefreshCw className="spin" size={17} /> Opening Google account chooser…</> : <><RefreshCw size={17} /> Sign in with another Google account</>}</button>}<div className="auth-footer"><Lock size={14} /> Auto-lock is enabled for your protection</div></div>{notice && <Toast notice={notice} onClose={() => undefined} />}</div>
 }
 
-function Sidebar({ view, setView, open, onClose, vault }: { view: View; setView: (view: View) => void; open: boolean; onClose: () => void; vault: Vault }) {
+function Sidebar({ view, setView, open, onClose, vault, onLogout }: { view: View; setView: (view: View) => void; open: boolean; onClose: () => void; vault: Vault; onLogout: () => void }) {
   const health = calculateHealth(vault.entries); const riskCount = new Set([...health.weak, ...health.reused, ...health.stale, ...health.missingUrl].map((entry) => entry.id)).size
   const nav = [{ id: 'overview' as const, label: 'Overview', icon: LayoutDashboard }, { id: 'all' as const, label: 'All passwords', icon: KeyRound, count: vault.entries.length }, { id: 'favorites' as const, label: 'Favorites', icon: Star, count: vault.entries.filter((entry) => entry.favorite).length }, { id: 'health' as const, label: 'Password health', icon: Activity, count: riskCount }]
-  return <><div className={open ? 'sidebar-overlay visible' : 'sidebar-overlay'} onClick={onClose} /><aside className={open ? 'sidebar mobile-open' : 'sidebar'}><div className="sidebar-brand"><div className="brand-mark small"><Shield size={18} /></div><span>Secure<span>Vault</span></span><button className="icon-button close-mobile" onClick={onClose}><X size={18} /></button></div><div className="vault-selector"><div className="vault-avatar"><FileKey2 size={18} /></div><div><strong>Personal vault</strong><small>Encrypted vault</small></div><MoreHorizontal size={17} /></div><div className="nav-section"><span className="nav-label">Workspace</span>{nav.map((item) => <button key={item.id} className={view === item.id ? 'nav-item active' : 'nav-item'} onClick={() => setView(item.id)}><item.icon size={17} /><span>{item.label}</span>{item.count !== undefined && <em>{item.count}</em>}</button>)}<button className={view === 'generator' ? 'nav-item active' : 'nav-item'} onClick={() => setView('generator')}><WandSparkles size={17} /><span>Password generator</span></button></div><div className="sidebar-bottom"><button className={view === 'settings' ? 'nav-item active' : 'nav-item'} onClick={() => setView('settings')}><Settings size={17} /><span>Settings</span></button><div className="security-card"><div className="security-icon"><Shield size={16} /></div><div><strong>Vault protected</strong><small>AES-256-GCM</small></div><span className="secure-check"><Check size={12} /></span></div><div className="sidebar-user"><div className="avatar">A</div><div><strong>admin</strong><small>Personal account</small></div><button className="icon-button"><LogOut size={16} /></button></div></div></aside></>
+  return <><div className={open ? 'sidebar-overlay visible' : 'sidebar-overlay'} onClick={onClose} /><aside className={open ? 'sidebar mobile-open' : 'sidebar'}><div className="sidebar-brand"><div className="brand-mark small"><Shield size={18} /></div><span>Secure<span>Vault</span></span><button className="icon-button close-mobile" onClick={onClose}><X size={18} /></button></div><div className="vault-selector"><div className="vault-avatar"><FileKey2 size={18} /></div><div><strong>Personal vault</strong><small>Encrypted vault</small></div><MoreHorizontal size={17} /></div><div className="nav-section"><span className="nav-label">Workspace</span>{nav.map((item) => <button key={item.id} className={view === item.id ? 'nav-item active' : 'nav-item'} onClick={() => setView(item.id)}><item.icon size={17} /><span>{item.label}</span>{item.count !== undefined && <em>{item.count}</em>}</button>)}<button className={view === 'generator' ? 'nav-item active' : 'nav-item'} onClick={() => setView('generator')}><WandSparkles size={17} /><span>Password generator</span></button></div><div className="sidebar-bottom"><button className={view === 'settings' ? 'nav-item active' : 'nav-item'} onClick={() => setView('settings')}><Settings size={17} /><span>Settings</span></button><div className="security-card"><div className="security-icon"><Shield size={16} /></div><div><strong>Vault protected</strong><small>AES-256-GCM</small></div><span className="secure-check"><Check size={12} /></span></div><div className="sidebar-user"><div className="avatar">A</div><div><strong>admin</strong><small>Personal account</small></div><button className="icon-button" onClick={onLogout} aria-label="Log out" title="Log out"><LogOut size={16} /></button></div></div></aside></>
 }
 
 function Overview({ vault, onNavigate, onSelect, onNew }: { vault: Vault; onNavigate: (view: View) => void; onSelect: (id: string) => void; onNew: () => void }) {
