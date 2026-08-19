@@ -30,12 +30,14 @@ describe('GoogleDriveProvider authentication', () => {
 
   it('can explicitly request the Google account chooser', async () => {
     const prompts: string[] = []
+    const loginHints: Array<string | undefined> = []
     window.google = {
       accounts: {
         oauth2: {
           initTokenClient: ({ callback }) => ({
             requestAccessToken: (options) => {
               prompts.push(options?.prompt ?? '')
+              loginHints.push(options?.login_hint)
               callback({ access_token: 'test-access-token' })
             },
           }),
@@ -52,6 +54,7 @@ describe('GoogleDriveProvider authentication', () => {
       await provider.connect({ prompt: 'select_account' })
       await provider.connect()
       expect(prompts).toEqual(['select_account'])
+      expect(loginHints).toEqual([undefined])
       expect(provider.getAccount()).toEqual({ email: 'owner@example.com', displayName: 'Owner', permissionId: 'owner-id' })
     } finally {
       delete window.google

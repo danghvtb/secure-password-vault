@@ -78,7 +78,7 @@ function App() {
       const metadata = preferences.driveMetadata
       if (!metadata) throw new Error('No vault is connected to this device.')
       const googleProvider = metadata.mode === 'google' && provider.mode === 'google' ? provider as GoogleDriveProvider : null
-      await provider.connect(googleProvider && !googleProvider.isConnected() ? { prompt: 'select_account' } : undefined)
+      await provider.connect(googleProvider && !googleProvider.isConnected() ? { loginHint: metadata.googleAccountEmail } : undefined)
       if (metadata.mode === 'google') {
         const account = provider.getAccount?.()
         if (!account) throw new Error('Google account email could not be determined.')

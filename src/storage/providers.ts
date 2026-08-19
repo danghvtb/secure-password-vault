@@ -48,7 +48,7 @@ export class MockDriveProvider implements VaultStorageProvider {
 }
 
 interface GoogleTokenClient {
-  requestAccessToken(options?: { prompt?: string }): void
+  requestAccessToken(options?: { prompt?: string; login_hint?: string }): void
 }
 
 interface GoogleIdentity {
@@ -109,7 +109,7 @@ export class GoogleDriveProvider implements VaultStorageProvider {
           },
         }) ?? null
         if (!this.tokenClient) finishReject(new Error('Google OAuth client could not be initialized.'))
-        else this.tokenClient.requestAccessToken({ prompt: options.prompt ?? '' })
+        else this.tokenClient.requestAccessToken({ prompt: options.prompt ?? '', login_hint: options.loginHint })
       } catch (error) {
         finishReject(error instanceof Error ? error : new Error('Google authorization failed.'))
       }

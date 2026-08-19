@@ -78,6 +78,7 @@ export interface DriveFileCandidate {
 
 export type GoogleConnectOptions = {
   prompt?: '' | 'none' | 'consent' | 'select_account'
+  loginHint?: string
 }
 
 export interface DriveMetadata {
