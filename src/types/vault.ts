@@ -60,6 +60,22 @@ export interface EncryptedVaultEnvelope {
 export type VaultPermission = 'owner' | 'writer' | 'reader'
 export type StorageMode = 'mock' | 'google'
 
+export interface GoogleAccount {
+  email: string
+  displayName?: string
+  permissionId?: string
+}
+
+export interface DriveFileCandidate {
+  fileId: string
+  fileName: string
+  mimeType?: string
+  createdTime?: string
+  modifiedTime?: string
+  trashed?: boolean
+  permission: VaultPermission
+}
+
 export type GoogleConnectOptions = {
   prompt?: '' | 'none' | 'consent' | 'select_account'
 }
@@ -69,6 +85,7 @@ export interface DriveMetadata {
   fileName: string
   permission: VaultPermission
   mode: StorageMode
+  googleAccountEmail?: string
   linkedAt: string
   lastSyncAt: string | null
 }
@@ -91,6 +108,8 @@ export interface VaultStorageProvider {
   share?(metadata: DriveMetadata, email: string, role: 'reader' | 'writer'): Promise<void>
   removePermission?(metadata: DriveMetadata, permissionId: string): Promise<void>
   switchAccount?(metadata?: DriveMetadata): Promise<DriveMetadata | undefined>
+  getAccount?(): GoogleAccount | null
+  findVaultFiles?(): Promise<DriveFileCandidate[]>
 }
 
 export interface VaultHealth {

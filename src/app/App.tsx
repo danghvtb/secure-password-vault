@@ -14,10 +14,16 @@ import {
   addEntry, addCategory, calculateHealth, createEmptyVault, createEntry, generatePassword,
   iconForEntry, removeEntry, scorePassword, searchEntries, toggleFavorite, updateEntry,
 } from '../vault/vaultService'
-import type { DrivePermission, EntryIcon as EntryIconType, EncryptedVaultEnvelope, Vault, VaultEntry, VaultStorageProvider } from '../types/vault'
+import type { DriveFileCandidate, DriveMetadata, DrivePermission, EntryIcon as EntryIconType, EncryptedVaultEnvelope, GoogleAccount, Vault, VaultEntry, VaultStorageProvider } from '../types/vault'
 
 type View = 'overview' | 'all' | 'favorites' | 'health' | 'generator' | 'settings'
 type Notice = { type: 'success' | 'error' | 'info'; message: string }
+
+interface GoogleSetupState {
+  provider: GoogleDriveProvider
+  account: GoogleAccount
+  files: DriveFileCandidate[]
+}
 
 function App() {
   const [preferences, setPreferences] = useState<DevicePreferences>(() => loadPreferences())
@@ -32,6 +38,7 @@ function App() {
   const [editingEntry, setEditingEntry] = useState<VaultEntry | null>(null)
   const [mobileMenu, setMobileMenu] = useState(false)
   const [provider, setProvider] = useState<VaultStorageProvider>(() => createProvider(preferences))
+  const [googleSetup, setGoogleSetup] = useState<GoogleSetupState | null>(null)
   const keyRef = useRef<CryptoKey | null>(null)
   const saltRef = useRef<Uint8Array | null>(null)
 
@@ -71,6 +78,19 @@ function App() {
       const metadata = preferences.driveMetadata
       if (!metadata) throw new Error('No vault is connected to this device.')
       await provider.connect()
+      if (metadata.mode === 'google') {
+        const account = provider.getAccount?.()
+        if (!account) throw new Error('Google account email could not be determined.')
+        if (metadata.googleAccountEmail && metadata.googleAccountEmail.toLowerCase() !== account.email.toLowerCase()) {
+          throw new Error(`This vault belongs to ${metadata.googleAccountEmail}. Select that Google account to unlock it.`)
+        }
+        if (!metadata.googleAccountEmail) {
+          const upgradedMetadata = { ...metadata, googleAccountEmail: account.email }
+          const upgradedPreferences = { ...preferences, driveMetadata: upgradedMetadata }
+          savePreferences(upgradedPreferences)
+          setPreferences(upgradedPreferences)
+        }
+      }
       const envelope = await provider.download(metadata)
       const result = await decryptVault(envelope, password)
       keyRef.current = result.key
@@ -85,15 +105,58 @@ function App() {
     }
   }
 
+  const metadataForGoogleFile = (candidate: DriveFileCandidate, account: GoogleAccount): DriveMetadata => ({
+    fileId: candidate.fileId,
+    fileName: candidate.fileName,
+    permission: candidate.permission,
+    mode: 'google',
+    googleAccountEmail: account.email,
+    linkedAt: new Date().toISOString(),
+    lastSyncAt: null,
+  })
+
+  const linkGoogleFile = async (googleProvider: GoogleDriveProvider, account: GoogleAccount, candidate: DriveFileCandidate) => {
+    const metadata = metadataForGoogleFile(candidate, account)
+    const nextPreferences = { ...preferences, setupComplete: true, storageMode: 'google' as const, driveMetadata: metadata }
+    setProvider(googleProvider)
+    setGoogleSetup(null)
+    keyRef.current = null
+    saltRef.current = null
+    savePreferences(nextPreferences)
+    setPreferences(nextPreferences)
+    setLocked(true)
+    setVault(null)
+    setNotice({ type: 'success', message: `Google Drive vault linked for ${account.email}.` })
+  }
+
+  const connectGoogleForSetup = async () => {
+    const googleProvider = new GoogleDriveProvider()
+    await googleProvider.connect({ prompt: 'select_account' })
+    const account = googleProvider.getAccount()
+    if (!account) throw new Error('Google account email could not be determined.')
+    const files = await googleProvider.findVaultFiles()
+    setProvider(googleProvider)
+    setGoogleSetup({ provider: googleProvider, account, files })
+    if (files.length === 1) await linkGoogleFile(googleProvider, account, files[0])
+  }
+
   const setup = async (password: string, mode: 'mock' | 'google') => {
-    const provider = mode === 'google' ? new GoogleDriveProvider() : new MockDriveProvider()
-    await provider.connect(mode === 'google' ? { prompt: 'select_account' } : undefined)
+    let activeProvider: VaultStorageProvider
+    if (mode === 'google') {
+      if (!googleSetup) throw new Error('Connect your Google account before creating a vault.')
+      if (googleSetup.files.length > 0) throw new Error('This Google account already has a vault. Unlock it instead of creating another one.')
+      activeProvider = googleSetup.provider
+    } else {
+      activeProvider = new MockDriveProvider()
+      await activeProvider.connect()
+    }
     const empty = createEmptyVault()
     const envelope = await encryptVault(empty, password)
-    const metadata = await provider.create(envelope)
+    const metadata = await activeProvider.create(envelope)
     const result = await decryptVault(envelope, password)
     const nextPreferences = { ...preferences, setupComplete: true, storageMode: mode, driveMetadata: metadata }
-    setProvider(provider)
+    setProvider(activeProvider)
+    setGoogleSetup(null)
     keyRef.current = result.key
     saltRef.current = result.salt
     savePreferences(nextPreferences)
@@ -143,9 +206,11 @@ function App() {
   const connectExisting = async (fileIdOrUrl: string) => {
     const fileId = parseDriveFileId(fileIdOrUrl)
     if (!fileId) throw new Error('Enter a valid Google Drive file URL or file ID.')
-    const googleProvider = provider.mode === 'google' ? provider : new GoogleDriveProvider()
+    const googleProvider = provider.mode === 'google' ? provider as GoogleDriveProvider : new GoogleDriveProvider()
     await googleProvider.connect({ prompt: 'select_account' })
-    const metadata = await googleProvider.getMetadata({ fileId, fileName: 'PasswordVault.vault', permission: 'writer', mode: 'google', linkedAt: new Date().toISOString(), lastSyncAt: null })
+    const account = googleProvider.getAccount()
+    if (!account) throw new Error('Google account email could not be determined.')
+    const metadata = await googleProvider.getMetadata({ fileId, fileName: 'PasswordVault.vault', permission: 'writer', mode: 'google', googleAccountEmail: account.email, linkedAt: new Date().toISOString(), lastSyncAt: null })
     const nextPreferences = { ...preferences, setupComplete: true, storageMode: 'google' as const, driveMetadata: metadata }
     setProvider(googleProvider)
     keyRef.current = null
@@ -158,15 +223,19 @@ function App() {
   }
 
   const switchGoogleAccount = async () => {
-    if (provider.mode !== 'google' || !provider.switchAccount) return
     try {
-      const nextMetadata = await provider.switchAccount(preferences.driveMetadata ?? undefined)
-      if (nextMetadata) {
-        const nextPreferences = { ...preferences, driveMetadata: nextMetadata }
-        savePreferences(nextPreferences)
-        setPreferences(nextPreferences)
-      }
-      showNotice({ type: 'success', message: 'Google account changed and current vault access was verified.' })
+      const nextProvider = new GoogleDriveProvider()
+      await nextProvider.connect({ prompt: 'select_account' })
+      const account = nextProvider.getAccount()
+      if (!account) throw new Error('Google account email could not be determined.')
+      const files = await nextProvider.findVaultFiles()
+      const nextPreferences = { ...preferences, setupComplete: false, storageMode: 'google' as const, driveMetadata: null }
+      setProvider(nextProvider)
+      setGoogleSetup({ provider: nextProvider, account, files })
+      savePreferences(nextPreferences)
+      setPreferences(nextPreferences)
+      lock()
+      if (files.length === 1) await linkGoogleFile(nextProvider, account, files[0])
     } catch (error) {
       showNotice({ type: 'error', message: error instanceof Error ? error.message : 'Could not change Google account.' })
     }
@@ -187,10 +256,10 @@ function App() {
   const selectedEntry = vault?.entries.find((entry) => entry.id === selectedId) ?? entries[0] ?? null
 
   if (!preferences.setupComplete) {
-    return <SetupWizard onSetup={setup} onConnectExisting={connectExisting} configuredGoogle={Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID)} />
+    return <SetupWizard onSetup={setup} onGoogleConnect={connectGoogleForSetup} onSelectGoogleFile={(candidate) => googleSetup ? linkGoogleFile(googleSetup.provider, googleSetup.account, candidate) : Promise.reject(new Error('Connect Google first.'))} googleSetup={googleSetup} configuredGoogle={Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID)} />
   }
   if (locked || !vault) {
-    return <UnlockScreen username={preferences.username} onUnlock={unlock} notice={notice} />
+    return <UnlockScreen username={preferences.username} accountEmail={preferences.driveMetadata?.googleAccountEmail} onUnlock={unlock} notice={notice} />
   }
 
   return (
@@ -210,7 +279,7 @@ function App() {
         <div className="page-content">
           {view === 'overview' && <Overview vault={vault} onNavigate={setView} onSelect={(id) => { setSelectedId(id); setView('all') }} onNew={() => { setEditingEntry(null); setModal('entry') }} />}
           {view === 'generator' && <GeneratorView />}
-          {view === 'settings' && <SettingsView preferences={preferences} setPreferences={(next) => { setPreferences(next); savePreferences(next) }} provider={provider} onNotice={showNotice} onDisconnect={() => { const next = clearDeviceLinkage(); setPreferences(next); lock() }} onSwitchGoogleAccount={switchGoogleAccount} onExport={exportBackup} onImport={importBackup} onConnectExisting={connectExisting} />}
+          {view === 'settings' && <SettingsView preferences={preferences} setPreferences={(next) => { setPreferences(next); savePreferences(next) }} provider={provider} onNotice={showNotice} onDisconnect={() => { const next = clearDeviceLinkage(); setGoogleSetup(null); setPreferences(next); lock() }} onSwitchGoogleAccount={switchGoogleAccount} onExport={exportBackup} onImport={importBackup} onConnectExisting={connectExisting} />}
           {view !== 'overview' && view !== 'generator' && view !== 'settings' && (
             <EntriesView
               title={view === 'all' ? 'All passwords' : view === 'favorites' ? 'Favorites' : 'Password health'}
@@ -244,46 +313,50 @@ function createProvider(preferences: DevicePreferences): VaultStorageProvider {
   return preferences.storageMode === 'google' ? new GoogleDriveProvider() : new MockDriveProvider()
 }
 
-function SetupWizard({ onSetup, onConnectExisting, configuredGoogle }: { onSetup: (password: string, mode: 'mock' | 'google') => Promise<void>; onConnectExisting: (fileIdOrUrl: string) => Promise<void>; configuredGoogle: boolean }) {
+function SetupWizard({ onSetup, onGoogleConnect, onSelectGoogleFile, googleSetup, configuredGoogle }: { onSetup: (password: string, mode: 'mock' | 'google') => Promise<void>; onGoogleConnect: () => Promise<void>; onSelectGoogleFile: (candidate: DriveFileCandidate) => Promise<void>; googleSetup: GoogleSetupState | null; configuredGoogle: boolean }) {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
-  const [mode, setMode] = useState<'mock' | 'google'>('mock')
+  const [mode, setMode] = useState<'mock' | 'google'>(configuredGoogle ? 'google' : 'mock')
   const [show, setShow] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [existingVault, setExistingVault] = useState('')
   const strength = scorePassword(password)
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
+    if (mode === 'google') {
+      if (!googleSetup) return setError('Connect your Google account before entering a Master Password.')
+      if (googleSetup.files.length > 0) return setError('This Google account already has a vault. Choose it above to unlock.')
+    }
     if (password.length < 12) return setError('Use at least 12 characters for your Master Password.')
     if (password !== confirm) return setError('Passwords do not match.')
     setBusy(true); setError('')
     try { await onSetup(password, mode) } catch (setupError) { setError(setupError instanceof Error ? setupError.message : 'Setup failed.') } finally { setBusy(false) }
   }
-  const connect = async () => {
-    if (!existingVault.trim()) return setError('Enter the Google Drive file URL or file ID.')
+  const connectGoogle = async () => {
     setBusy(true); setError('')
-    try { await onConnectExisting(existingVault.trim()) } catch (connectError) { setError(connectError instanceof Error ? connectError.message : 'Could not connect vault.') } finally { setBusy(false) }
+    try { await onGoogleConnect() } catch (connectError) { setError(connectError instanceof Error ? connectError.message : 'Could not connect Google account.') } finally { setBusy(false) }
   }
+  const hasGoogleFiles = Boolean(googleSetup?.files.length)
+  const showCreateForm = mode === 'mock' || Boolean(googleSetup && !hasGoogleFiles)
   return <div className="auth-screen"><div className="auth-brand"><div className="brand-mark"><Shield size={28} /></div><span>Secure<span>Vault</span></span></div><div className="setup-card">
     <div className="step-label"><span className="step-active">01</span><span>02</span><span>03</span></div>
-    <div className="eyebrow">Private by design</div><h1>Create your secure vault</h1><p className="auth-copy">Your Master Password is the only key. It never leaves this device and cannot be reset.</p>
-    <form onSubmit={submit}>
+    {mode === 'google' && !googleSetup && <><div className="eyebrow">Google account first</div><h1>Connect your Google Drive</h1><p className="auth-copy">Sign in with Google first. SecureVault will check whether this account already has a vault before asking for a Master Password.</p><div className="storage-choice"><div className="field-label">Vault storage</div><div className="choice-grid"><button type="button" className="choice selected"><Globe2 size={18} /><span><strong>Google Drive</strong><small>Encrypted vault in your Drive</small></span><Check size={16} /></button><button type="button" className="choice" onClick={() => { setMode('mock'); setError('') }}><Database size={18} /><span><strong>Local demo</strong><small>Encrypted browser storage</small></span><Check size={16} /></button></div></div>{error && <div className="form-error"><AlertTriangle size={16} />{error}</div>}<button className="primary-button full" disabled={busy} onClick={() => void connectGoogle()}>{busy ? <><RefreshCw className="spin" size={17} /> Connecting…</> : <>Connect with Google <Globe2 size={17} /></>}</button></>}
+    {mode === 'google' && googleSetup && hasGoogleFiles && <><div className="eyebrow">Choose your vault</div><h1>Select a vault to unlock</h1><p className="auth-copy">Signed in as <strong>{googleSetup.account.email}</strong>. Choose the file you want to use as the primary vault.</p><div className="candidate-list">{googleSetup.files.map((file) => <button className="candidate-row" key={file.fileId} disabled={busy} onClick={async () => { setBusy(true); setError(''); try { await onSelectGoogleFile(file) } catch (selectError) { setError(selectError instanceof Error ? selectError.message : 'Could not link vault.') } finally { setBusy(false) } }}><span><strong>{file.fileName}</strong><small>{file.modifiedTime ? `Updated ${new Date(file.modifiedTime).toLocaleString()}` : 'Google Drive vault'}</small></span><span>{file.permission === 'reader' ? 'Viewer' : file.permission === 'owner' ? 'Owner' : 'Editor'}</span><ChevronDown size={16} className="rotate-270" /></button>)}</div>{error && <div className="form-error"><AlertTriangle size={16} />{error}</div>}<div className="auth-footer"><Lock size={14} /> Existing files are preserved; none will be deleted</div></>}
+    {showCreateForm && <><div className="eyebrow">Private by design</div><h1>Create your secure vault</h1><p className="auth-copy">{mode === 'google' && googleSetup ? <>Signed in as <strong>{googleSetup.account.email}</strong>. Your Master Password is the only key and never leaves this device.</> : 'Your Master Password is the only key. It never leaves this device and cannot be reset.'}</p><form onSubmit={submit}>
       <label>Master Password<div className="password-field"><input autoFocus type={show ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 12 characters" /> <button type="button" onClick={() => setShow(!show)} aria-label="Toggle password visibility">{show ? <EyeOff size={18} /> : <Eye size={18} />}</button></div></label>
       <div className="strength"><div className="strength-bars">{[1, 2, 3, 4].map((level) => <span key={level} className={level <= strength ? `strength-${strength}` : ''} />)}</div><span>{password ? strength >= 4 ? 'Excellent' : strength >= 3 ? 'Good' : strength >= 2 ? 'Fair' : 'Weak' : 'Use a unique passphrase'}</span></div>
       <label>Confirm Master Password<input type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} placeholder="Enter it again" /></label>
       <div className="warning-box"><AlertTriangle size={18} /><span>If you lose this password, your encrypted vault cannot be recovered. SecureVault does not have a reset mechanism.</span></div>
-      <div className="storage-choice"><div className="field-label">Vault storage</div><div className="choice-grid"><button type="button" className={mode === 'mock' ? 'choice selected' : 'choice'} onClick={() => setMode('mock')}><Database size={18} /><span><strong>Local demo</strong><small>Encrypted browser storage</small></span><Check size={16} /></button><button type="button" className={mode === 'google' ? 'choice selected' : 'choice'} disabled={!configuredGoogle} onClick={() => setMode('google')}><Globe2 size={18} /><span><strong>Google Drive</strong><small>{configuredGoogle ? 'Connect your own Drive' : 'Add OAuth client ID first'}</small></span><Check size={16} /></button></div></div>
+      {mode === 'mock' && <div className="storage-choice"><div className="field-label">Vault storage</div><div className="choice-grid"><button type="button" className="choice selected"><Database size={18} /><span><strong>Local demo</strong><small>Encrypted browser storage</small></span><Check size={16} /></button><button type="button" className="choice" disabled={!configuredGoogle} onClick={() => { setMode('google'); setError('') }}><Globe2 size={18} /><span><strong>Google Drive</strong><small>{configuredGoogle ? 'Connect your own Drive' : 'Add OAuth client ID first'}</small></span><Check size={16} /></button></div></div>}
       {error && <div className="form-error"><AlertTriangle size={16} />{error}</div>}<button className="primary-button full" disabled={busy} type="submit">{busy ? <><RefreshCw className="spin" size={17} /> Creating encrypted vault…</> : <>Create my vault <ArrowDownToLine size={17} /></>}</button>
-    </form>
-    {configuredGoogle && <div className="connect-existing"><div className="field-label">Already have a vault?</div><p className="muted">Connect an existing Google Drive vault on this device instead of creating a duplicate.</p><div className="share-form"><input placeholder="Drive file URL or file ID" value={existingVault} onChange={(event) => setExistingVault(event.target.value)} /><button className="outline-button" type="button" disabled={!existingVault.trim() || busy} onClick={() => void connect()}>{busy ? 'Connecting…' : 'Connect existing vault'}</button></div></div>}
+    </form></>}
     <div className="auth-footer"><Lock size={14} /> AES-256-GCM encryption · PBKDF2-SHA256</div>
   </div></div>
 }
-function UnlockScreen({ username, onUnlock, notice }: { username: string; onUnlock: (password: string) => Promise<void>; notice: Notice | null }) {
+function UnlockScreen({ username, accountEmail, onUnlock, notice }: { username: string; accountEmail?: string; onUnlock: (password: string) => Promise<void>; notice: Notice | null }) {
   const [password, setPassword] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState('')
   const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(''); try { await onUnlock(password) } catch (unlockError) { setError(unlockError instanceof Error ? unlockError.message : 'Unable to unlock vault.') } finally { setBusy(false) } }
-  return <div className="auth-screen"><div className="auth-brand"><div className="brand-mark"><Shield size={28} /></div><span>Secure<span>Vault</span></span></div><div className="unlock-card"><div className="unlock-icon"><Lock size={30} /></div><div className="eyebrow">Welcome back, {username}</div><h1>Unlock your vault</h1><p className="auth-copy">Your passwords are encrypted and ready when you are.</p><form onSubmit={submit}><label>Master Password<div className="password-field"><input autoFocus type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your Master Password" /><button type="button" aria-label="Show password" onClick={(event) => { const input = event.currentTarget.previousElementSibling as HTMLInputElement | null; if (input) input.type = input.type === 'password' ? 'text' : 'password' }}><Eye size={18} /></button></div></label>{error && <div className="form-error"><AlertTriangle size={16} />{error}</div>}<button className="primary-button full" disabled={busy} type="submit">{busy ? <><RefreshCw className="spin" size={17} /> Unlocking…</> : <><KeyRound size={17} /> Unlock vault</>}</button></form><div className="auth-footer"><Lock size={14} /> Auto-lock is enabled for your protection</div></div>{notice && <Toast notice={notice} onClose={() => undefined} />}</div>
+  return <div className="auth-screen"><div className="auth-brand"><div className="brand-mark"><Shield size={28} /></div><span>Secure<span>Vault</span></span></div><div className="unlock-card"><div className="unlock-icon"><Lock size={30} /></div><div className="eyebrow">Welcome back, {username}</div><h1>Unlock your vault</h1><p className="auth-copy">{accountEmail ? <>Signed in as <strong>{accountEmail}</strong>.</> : 'Your passwords are encrypted and ready when you are.'}</p><form onSubmit={submit}><label>Master Password<div className="password-field"><input autoFocus type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your Master Password" /><button type="button" aria-label="Show password" onClick={(event) => { const input = event.currentTarget.previousElementSibling as HTMLInputElement | null; if (input) input.type = input.type === 'password' ? 'text' : 'password' }}><Eye size={18} /></button></div></label>{error && <div className="form-error"><AlertTriangle size={16} />{error}</div>}<button className="primary-button full" disabled={busy} type="submit">{busy ? <><RefreshCw className="spin" size={17} /> Unlocking…</> : <><KeyRound size={17} /> Unlock vault</>}</button></form><div className="auth-footer"><Lock size={14} /> Auto-lock is enabled for your protection</div></div>{notice && <Toast notice={notice} onClose={() => undefined} />}</div>
 }
 
 function Sidebar({ view, setView, open, onClose, vault }: { view: View; setView: (view: View) => void; open: boolean; onClose: () => void; vault: Vault }) {

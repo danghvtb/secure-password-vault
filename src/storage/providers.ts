@@ -1,5 +1,5 @@
 import { deserializeEnvelope, serializeEnvelope } from '../crypto/vaultCrypto'
-import type { DriveMetadata, DrivePermission, EncryptedVaultEnvelope, GoogleConnectOptions, VaultStorageProvider } from '../types/vault'
+import type { DriveFileCandidate, DriveMetadata, DrivePermission, EncryptedVaultEnvelope, GoogleAccount, GoogleConnectOptions, VaultStorageProvider } from '../types/vault'
 
 const MOCK_KEY = 'securevault.mock-drive.envelope.v1'
 const MOCK_META_KEY = 'securevault.mock-drive.metadata.v1'
@@ -17,6 +17,7 @@ export class MockDriveProvider implements VaultStorageProvider {
       fileName: 'PasswordVault.vault',
       permission: 'owner',
       mode: 'mock',
+      googleAccountEmail: undefined,
       linkedAt: new Date().toISOString(),
       lastSyncAt: new Date().toISOString(),
     }
@@ -63,6 +64,7 @@ export class GoogleDriveProvider implements VaultStorageProvider {
   private accessToken = ''
   private tokenClient: GoogleTokenClient | null = null
   private readonly clientId: string
+  private account: GoogleAccount | null = null
 
   constructor(clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '') {
     this.clientId = clientId
@@ -83,6 +85,33 @@ export class GoogleDriveProvider implements VaultStorageProvider {
       }) ?? null
       this.tokenClient?.requestAccessToken({ prompt: options.prompt ?? '' })
     })
+    const response = await this.request('https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName,permissionId)')
+    const body = await response.json() as { user?: { emailAddress?: string; displayName?: string; permissionId?: string } }
+    const email = body.user?.emailAddress?.trim()
+    if (!email) throw new Error('Google account email could not be determined.')
+    this.account = { email, displayName: body.user?.displayName, permissionId: body.user?.permissionId }
+  }
+
+  getAccount(): GoogleAccount | null {
+    return this.account
+  }
+
+  async findVaultFiles(): Promise<DriveFileCandidate[]> {
+    const query = "name = 'PasswordVault.vault' and appProperties has { key = 'app' and value = 'secure-password-manager' } and trashed = false"
+    const fields = 'files(id,name,mimeType,createdTime,modifiedTime,trashed,capabilities(canEdit),owners(permissionId))'
+    const response = await this.request(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&spaces=drive&orderBy=modifiedTime%20desc&fields=${encodeURIComponent(fields)}`)
+    const body = await response.json() as { files?: Array<{ id: string; name: string; mimeType?: string; createdTime?: string; modifiedTime?: string; trashed?: boolean; capabilities?: { canEdit?: boolean }; owners?: Array<{ permissionId?: string }> }> }
+    return (body.files ?? []).map((file) => ({
+      fileId: file.id,
+      fileName: file.name,
+      mimeType: file.mimeType,
+      createdTime: file.createdTime,
+      modifiedTime: file.modifiedTime,
+      trashed: file.trashed,
+      permission: file.owners?.some((owner) => owner.permissionId && owner.permissionId === this.account?.permissionId)
+        ? 'owner'
+        : file.capabilities?.canEdit === false ? 'reader' : 'writer',
+    }))
   }
 
   async switchAccount(metadata?: DriveMetadata): Promise<DriveMetadata | undefined> {
@@ -98,6 +127,9 @@ export class GoogleDriveProvider implements VaultStorageProvider {
   }
 
   async create(envelope: EncryptedVaultEnvelope): Promise<DriveMetadata> {
+    if (!this.account) throw new Error('Connect a Google account before creating a vault.')
+    const existingFiles = await this.findVaultFiles()
+    if (existingFiles.length > 0) throw new Error('This Google account already has a vault. Select the existing vault instead of creating another one.')
     const metadata = { name: 'PasswordVault.vault', mimeType: 'application/octet-stream', appProperties: { app: 'secure-password-manager', schemaVersion: '1' } }
     const response = await this.request('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
       method: 'POST',
@@ -105,7 +137,7 @@ export class GoogleDriveProvider implements VaultStorageProvider {
       headers: { 'Content-Type': 'multipart/related; boundary=securevault-boundary' },
     })
     const file = await response.json() as { id: string; name: string }
-    return { fileId: file.id, fileName: file.name, permission: 'owner', mode: 'google', linkedAt: new Date().toISOString(), lastSyncAt: new Date().toISOString() }
+    return { fileId: file.id, fileName: file.name, permission: 'owner', mode: 'google', googleAccountEmail: this.account.email, linkedAt: new Date().toISOString(), lastSyncAt: new Date().toISOString() }
   }
 
   async download(metadata: DriveMetadata): Promise<EncryptedVaultEnvelope> {
@@ -123,7 +155,7 @@ export class GoogleDriveProvider implements VaultStorageProvider {
     const response = await this.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(metadata.fileId)}?fields=id,name,capabilities(canEdit),trashed`)
     const file = await response.json() as { id: string; name: string; capabilities?: { canEdit?: boolean }; trashed?: boolean }
     if (file.trashed) throw new Error('Vault file was moved to trash.')
-    return { ...metadata, fileName: file.name, permission: file.capabilities?.canEdit === false ? 'reader' : metadata.permission }
+    return { ...metadata, fileName: file.name, googleAccountEmail: metadata.googleAccountEmail ?? this.account?.email, permission: file.capabilities?.canEdit === false ? 'reader' : metadata.permission }
   }
 
   async listPermissions(metadata: DriveMetadata): Promise<DrivePermission[]> {
