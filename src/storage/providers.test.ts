@@ -50,6 +50,7 @@ describe('GoogleDriveProvider authentication', () => {
     try {
       const provider = new GoogleDriveProvider('test-client-id')
       await provider.connect({ prompt: 'select_account' })
+      await provider.connect()
       expect(prompts).toEqual(['select_account'])
       expect(provider.getAccount()).toEqual({ email: 'owner@example.com', displayName: 'Owner', permissionId: 'owner-id' })
     } finally {

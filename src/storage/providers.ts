@@ -72,6 +72,7 @@ export class GoogleDriveProvider implements VaultStorageProvider {
 
   async connect(options: GoogleConnectOptions = {}): Promise<void> {
     if (!this.clientId) throw new Error('Google OAuth client ID is not configured.')
+    if (this.accessToken && this.account && (options.prompt === undefined || options.prompt === '' || options.prompt === 'none')) return
     await loadGoogleIdentityScript()
     if (!window.google) throw new Error('Google Identity Services could not load.')
     await new Promise<void>((resolve, reject) => {
@@ -79,7 +80,10 @@ export class GoogleDriveProvider implements VaultStorageProvider {
         client_id: this.clientId,
         scope: 'https://www.googleapis.com/auth/drive.file',
         callback: (response) => {
-          if (response.error || !response.access_token) reject(new Error('Google authorization failed.'))
+          if (response.error || !response.access_token) {
+            const canRetryInteractively = response.error === 'interaction_required' || response.error === 'login_required' || response.error === 'consent_required'
+            reject(new Error(canRetryInteractively ? 'Google session expired. Use "Sign in with another Google account" to reconnect.' : 'Google authorization failed.'))
+          }
           else { this.accessToken = response.access_token; resolve() }
         },
       }) ?? null
